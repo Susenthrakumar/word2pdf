@@ -1,0 +1,4 @@
+flask==2.3.2
+docx2pdf==0.1.8
+python-docx==0.8.11
+uuid==1.30
