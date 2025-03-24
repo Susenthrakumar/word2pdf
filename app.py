@@ -5,10 +5,18 @@ import subprocess
 import uuid
 import time
 import shutil
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[logging.FileHandler("app.log"), logging.StreamHandler()])
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
 
 # Create necessary directories if they don't exist
 for folder in [app.config['UPLOAD_FOLDER'], app.config['OUTPUT_FOLDER']]:
@@ -29,7 +37,7 @@ def convert_file():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
     
-    if file and file.filename.endswith(('.docx', '.doc')):
+    if file and file.filename.lower().endswith(('.docx', '.doc')):
         # Generate unique filename to prevent collisions
         unique_id = str(uuid.uuid4())
         timestamp = int(time.time())
@@ -45,32 +53,34 @@ def convert_file():
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
         
         try:
-            # Try multiple conversion methods until one succeeds
+            # Try conversion methods
+            logger.info(f"Starting conversion for {file.filename}")
             conversion_success = False
             error_messages = []
             
-            # Method 1: Try with LibreOffice
-            try:
-                conversion_success = convert_with_libreoffice(input_path, output_path)
-            except Exception as e:
-                error_messages.append(f"LibreOffice conversion failed: {str(e)}")
+            # Try with PDF converters in order of preference
+            conversion_methods = [
+                ('pandoc', convert_with_pandoc),
+                ('libreoffice', convert_with_libreoffice),
+                ('unoconv', convert_with_unoconv),
+                ('python-docx-pypdf', convert_with_python_docx),
+            ]
             
-            # Method 2: Try with unoconv (if Method 1 failed)
-            if not conversion_success:
+            for method_name, method_func in conversion_methods:
                 try:
-                    conversion_success = convert_with_unoconv(input_path, output_path)
+                    logger.info(f"Trying conversion with {method_name}")
+                    conversion_success = method_func(input_path, output_path)
+                    if conversion_success:
+                        logger.info(f"Conversion with {method_name} successful")
+                        break
                 except Exception as e:
-                    error_messages.append(f"Unoconv conversion failed: {str(e)}")
-            
-            # Method 3: Try with python-docx and reportlab (if Methods 1 & 2 failed)
-            if not conversion_success:
-                try:
-                    conversion_success = convert_with_python_docx(input_path, output_path)
-                except Exception as e:
-                    error_messages.append(f"Python-docx conversion failed: {str(e)}")
+                    error_msg = f"{method_name} conversion failed: {str(e)}"
+                    logger.warning(error_msg)
+                    error_messages.append(error_msg)
             
             # If no conversion method succeeded
             if not conversion_success:
+                logger.error("All conversion methods failed")
                 raise Exception("All conversion methods failed: " + " | ".join(error_messages))
             
             # Clean up the uploaded file
@@ -84,12 +94,32 @@ def convert_file():
             })
             
         except Exception as e:
+            logger.error(f"Conversion error: {str(e)}")
             # If conversion fails, clean up and return error
             if os.path.exists(input_path):
                 os.remove(input_path)
             return jsonify({'error': str(e)}), 500
     else:
         return jsonify({'error': 'Invalid file format. Please upload a Word document (.doc or .docx)'}), 400
+
+def convert_with_pandoc(input_path, output_path):
+    """Convert a Word document to PDF using Pandoc (high quality)"""
+    try:
+        # Check if pandoc is installed
+        if not shutil.which('pandoc'):
+            raise FileNotFoundError("Pandoc not found. Install with 'apt-get install pandoc texlive-latex-base texlive-fonts-recommended'")
+        
+        # Run the conversion with Pandoc (via LaTeX for best results)
+        cmd = ['pandoc', input_path, '--pdf-engine=xelatex', '-o', output_path]
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        
+        if process.returncode != 0:
+            raise Exception(f"Pandoc returned error code {process.returncode}: {process.stderr}")
+        
+        return os.path.exists(output_path) and os.path.getsize(output_path) > 0
+        
+    except Exception as e:
+        raise Exception(f"Pandoc conversion error: {str(e)}")
 
 def find_libreoffice_executable():
     """Find the LibreOffice executable on the system"""
@@ -99,7 +129,8 @@ def find_libreoffice_executable():
         '/usr/bin/libreoffice',
         '/usr/bin/soffice',
         '/usr/lib/libreoffice/program/soffice',
-        '/opt/libreoffice*/program/soffice'
+        '/opt/libreoffice*/program/soffice',
+        '/Applications/LibreOffice.app/Contents/MacOS/soffice'  # macOS
     ]
     
     for exe in possible_executables:
@@ -111,7 +142,7 @@ def find_libreoffice_executable():
                 if os.path.isfile(match) and os.access(match, os.X_OK):
                     return match
         # Direct path or command name
-        elif shutil.which(exe):
+        elif exe and shutil.which(exe):
             return shutil.which(exe)
     
     raise FileNotFoundError("LibreOffice executable not found. Please install LibreOffice.")
@@ -124,18 +155,20 @@ def convert_with_libreoffice(input_path, output_path):
         # Find LibreOffice executable
         libreoffice_exec = find_libreoffice_executable()
         
-        # Command to convert using LibreOffice
+        # Command to convert using LibreOffice with better parameters
         cmd = [
             libreoffice_exec, 
             '--headless', 
+            '--norestore',
+            '--invisible',
             '--convert-to', 
-            'pdf',
+            'pdf:writer_pdf_Export',  # Use the PDF/A-1a format for better quality
             '--outdir', 
             output_dir,
             input_path
         ]
         
-        process = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         
         if process.returncode != 0:
             raise Exception(f"LibreOffice returned error code {process.returncode}: {process.stderr}")
@@ -147,9 +180,9 @@ def convert_with_libreoffice(input_path, output_path):
         
         if os.path.exists(temp_output) and temp_output != output_path:
             os.rename(temp_output, output_path)
-            return True
+            return os.path.getsize(output_path) > 0
         elif os.path.exists(output_path):
-            return True
+            return os.path.getsize(output_path) > 0
         else:
             raise FileNotFoundError("Conversion completed but output file not found")
             
@@ -165,60 +198,78 @@ def convert_with_unoconv(input_path, output_path):
         if not shutil.which('unoconv'):
             raise FileNotFoundError("unoconv not found. Install with 'pip install unoconv' or 'apt-get install unoconv'")
         
-        # Run the conversion
-        cmd = ['unoconv', '-f', 'pdf', '-o', output_path, input_path]
-        process = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        # Run the conversion with better parameters
+        cmd = ['unoconv', '-f', 'pdf', '--format=pdf', '-eSelectPdfVersion=1', '-o', output_path, input_path]
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         
         if process.returncode != 0:
             raise Exception(f"unoconv returned error code {process.returncode}: {process.stderr}")
         
-        return os.path.exists(output_path)
+        return os.path.exists(output_path) and os.path.getsize(output_path) > 0
         
     except Exception as e:
         raise Exception(f"unoconv conversion error: {str(e)}")
 
 def convert_with_python_docx(input_path, output_path):
     """
-    Basic conversion using python-docx and reportlab.
-    Note: This will have limited formatting support compared to LibreOffice.
+    Convert using python-docx for reading and PyPDF for writing.
+    Better handling of document structure compared to the reportlab version.
     """
     try:
-        # Import necessary libraries - these should be added to requirements.txt
+        # Import necessary libraries
         from docx import Document
         from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.styles import getSampleStyleSheet
         
         # Open the Word document
         doc = Document(input_path)
         
-        # Create a new PDF
-        c = canvas.Canvas(output_path, pagesize=letter)
-        width, height = letter
+        # Create PDF document
+        pdf = SimpleDocTemplate(output_path, pagesize=letter)
+        styles = getSampleStyleSheet()
         
-        # Set initial position
-        y = height - 40
+        # Extract content from Word document
+        content = []
         
-        # Process each paragraph
+        # Process paragraphs
         for para in doc.paragraphs:
             if not para.text.strip():
-                y -= 12  # Skip some space for empty paragraphs
+                content.append(Spacer(1, 12))
                 continue
-                
-            # Wrap text to fit page width
-            text = para.text
-            c.drawString(40, y, text[:80])  # Simplified: just show first 80 chars
             
-            y -= 12  # Move down for next line
+            # Determine style based on paragraph properties
+            style = 'Normal'
+            if para.style.name.startswith('Heading'):
+                style = 'Heading1'
             
-            # Check if we need a new page
-            if y < 40:
-                c.showPage()
-                y = height - 40
+            # Add paragraph to content
+            content.append(Paragraph(para.text, styles[style]))
+            content.append(Spacer(1, 6))
+            
+        # Process tables (simplified handling)
+        for table in doc.tables:
+            data = []
+            for row in table.rows:
+                row_data = []
+                for cell in row.cells:
+                    row_data.append(cell.text)
+                data.append(row_data)
+            
+            if data:  # Only process if there's actually data
+                table_style = TableStyle([
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ])
+                content.append(Table(data, style=table_style))
+                content.append(Spacer(1, 12))
         
-        # Save the PDF
-        c.save()
+        # Build PDF
+        pdf.build(content)
         
-        return os.path.exists(output_path)
+        return os.path.exists(output_path) and os.path.getsize(output_path) > 0
         
     except ImportError:
         raise Exception("Required libraries not installed. Run 'pip install python-docx reportlab'")
@@ -227,11 +278,15 @@ def convert_with_python_docx(input_path, output_path):
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    return send_file(os.path.join(app.config['OUTPUT_FOLDER'], filename), 
-                     as_attachment=True, 
-                     download_name=filename.split('_', 2)[2])  # Remove the unique ID prefix
+    file_path = os.path.join(app.config['OUTPUT_FOLDER'], filename)
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+        
+    return send_file(file_path, 
+                    as_attachment=True, 
+                    download_name=filename.split('_', 2)[2])  # Remove the unique ID prefix
 
-# Clean up old files periodically (you might want to implement this as a background task)
+# Clean up old files periodically
 @app.route('/cleanup', methods=['POST'])
 def cleanup():
     threshold_time = time.time() - (24 * 60 * 60)  # 24 hours ago
