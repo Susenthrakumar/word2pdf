@@ -1,4 +1,7 @@
 flask==2.3.2
 python-docx==0.8.11
 uuid==1.30
-gunicorn
+reportlab==4.0.4
+# Optional libraries that you might need:
+# unoconv
+# python-uno
