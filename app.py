@@ -1,9 +1,8 @@
-# app.py
 from flask import Flask, request, render_template, send_file, jsonify
 import os
-from pdfkit import convert
 import uuid
 import time
+import subprocess
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -29,39 +28,32 @@ def convert_file():
         return jsonify({'error': 'No selected file'}), 400
     
     if file and file.filename.endswith(('.docx', '.doc')):
-        # Generate unique filename to prevent collisions
         unique_id = str(uuid.uuid4())
         timestamp = int(time.time())
         file_id = f"{timestamp}_{unique_id}"
         
-        # Save uploaded file with the unique ID
         input_filename = f"{file_id}_{file.filename}"
         input_path = os.path.join(app.config['UPLOAD_FOLDER'], input_filename)
         file.save(input_path)
         
-        # Create output filename and path
         output_filename = f"{file_id}_{os.path.splitext(file.filename)[0]}.pdf"
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
         
         try:
-            # Convert Word document to PDF
-            convert(input_path, output_path)
+            # Convert DOCX to PDF using unoconv (LibreOffice)
+            subprocess.run(["unoconv", "-f", "pdf", "-o", output_path, input_path], check=True)
+
+            os.remove(input_path)  # Delete the uploaded DOCX file
             
-            # Clean up the uploaded file
-            os.remove(input_path)
-            
-            # Return the download URL
             return jsonify({
                 'success': True,
                 'filename': os.path.splitext(file.filename)[0] + '.pdf',
                 'download_url': f'/download/{output_filename}'
             })
             
-        except Exception as e:
-            # If conversion fails, clean up and return error
-            if os.path.exists(input_path):
-                os.remove(input_path)
-            return jsonify({'error': str(e)}), 500
+        except subprocess.CalledProcessError as e:
+            os.remove(input_path)  # Cleanup if failed
+            return jsonify({'error': 'Conversion failed: ' + str(e)}), 500
     else:
         return jsonify({'error': 'Invalid file format. Please upload a Word document (.doc or .docx)'}), 400
 
@@ -71,7 +63,6 @@ def download_file(filename):
                      as_attachment=True, 
                      download_name=filename.split('_', 2)[2])  # Remove the unique ID prefix
 
-# Clean up old files periodically (you might want to implement this as a background task)
 @app.route('/cleanup', methods=['POST'])
 def cleanup():
     threshold_time = time.time() - (24 * 60 * 60)  # 24 hours ago
@@ -87,7 +78,6 @@ def cleanup():
                     os.remove(file_path)
                     deleted_count += 1
             except (ValueError, IndexError, OSError):
-                # Skip files that don't follow the naming convention or can't be deleted
                 continue
     
     return jsonify({'success': True, 'deleted_count': deleted_count})
