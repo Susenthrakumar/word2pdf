@@ -1,6 +1,4 @@
 flask==2.3.2
-gunicorn
-uuid
 python-docx==0.8.11
-unoconv
-libreoffice
+uuid==1.30
+gunicorn
