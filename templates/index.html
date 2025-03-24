@@ -1,229 +1,151 @@
-<!-- templates/index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Word to PDF Converter</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
-            background-color: #f8f9fa;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
         }
-        .converter-container {
-            max-width: 600px;
-            margin: 50px auto;
-            padding: 30px;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        .container {
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
         }
-        .title {
-            text-align: center;
-            margin-bottom: 30px;
-            color: #0d6efd;
-        }
-        .file-upload-wrapper {
-            position: relative;
-            margin-bottom: 20px;
-            border: 2px dashed #d2d6da;
-            border-radius: 6px;
-            padding: 30px;
-            text-align: center;
-            background: #f8f9fa;
-            transition: all 0.3s ease;
-        }
-        .file-upload-wrapper:hover {
-            background: #e9ecef;
-        }
-        .upload-icon {
-            font-size: 48px;
-            color: #6c757d;
+        .form-group {
             margin-bottom: 15px;
         }
-        #file-chosen {
-            margin-top: 10px;
-            font-weight: 500;
+        .btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
         }
-        .progress-area {
+        .btn:hover {
+            background-color: #45a049;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
             display: none;
-            margin: 20px 0;
         }
-        .success-message {
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        #loading {
             display: none;
             text-align: center;
-            margin: 20px 0;
+            margin-top: 20px;
         }
-        .error-message {
-            display: none;
-            color: #dc3545;
-            margin: 15px 0;
-            text-align: center;
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+            margin: 0 auto;
         }
-        @media (max-width: 576px) {
-            .converter-container {
-                margin: 20px;
-                padding: 20px;
-            }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="converter-container">
-            <h1 class="title">Word to PDF Converter</h1>
-            
-            <div class="file-upload-wrapper" id="drop-area">
-                <div class="upload-icon">📄</div>
-                <p>Drag & Drop or Click to Upload</p>
-                <p class="text-muted small">Supported formats: .doc, .docx</p>
-                <input type="file" id="file-input" class="d-none" accept=".doc,.docx">
-                <button class="btn btn-primary mt-3" id="select-file-btn">Select File</button>
-                <div id="file-chosen" class="text-truncate"></div>
+        <h1>Word to PDF Converter</h1>
+        <p>Upload a Word document (.doc or .docx) and convert it to PDF format.</p>
+        
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="file">Select Word Document:</label>
+                <input type="file" id="file" name="file" accept=".doc,.docx" required>
             </div>
-            
-            <button id="convert-btn" class="btn btn-success w-100" disabled>Convert to PDF</button>
-            
-            <div class="progress-area" id="progress-area">
-                <p class="text-center mb-2">Converting...</p>
-                <div class="progress">
-                    <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
-                </div>
-            </div>
-            
-            <div class="error-message" id="error-message"></div>
-            
-            <div class="success-message" id="success-message">
-                <p class="text-success">Conversion Successful!</p>
-                <a id="download-link" class="btn btn-primary" href="#" download>Download PDF</a>
-            </div>
+            <button type="submit" class="btn">Convert to PDF</button>
+        </form>
+        
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Converting, please wait...</p>
         </div>
+        
+        <div id="status"></div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const dropArea = document.getElementById('drop-area');
-            const fileInput = document.getElementById('file-input');
-            const selectFileBtn = document.getElementById('select-file-btn');
-            const fileChosen = document.getElementById('file-chosen');
-            const convertBtn = document.getElementById('convert-btn');
-            const progressArea = document.getElementById('progress-area');
-            const errorMessage = document.getElementById('error-message');
-            const successMessage = document.getElementById('success-message');
-            const downloadLink = document.getElementById('download-link');
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
             
-            // Event listeners for drag and drop
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                dropArea.addEventListener(eventName, preventDefaults, false);
-            });
+            const fileInput = document.getElementById('file');
+            const file = fileInput.files[0];
             
-            function preventDefaults(e) {
-                e.preventDefault();
-                e.stopPropagation();
+            if (!file) {
+                showStatus('Please select a file.', 'error');
+                return;
             }
             
-            ['dragenter', 'dragover'].forEach(eventName => {
-                dropArea.addEventListener(eventName, highlight, false);
-            });
-            
-            ['dragleave', 'drop'].forEach(eventName => {
-                dropArea.addEventListener(eventName, unhighlight, false);
-            });
-            
-            function highlight() {
-                dropArea.classList.add('bg-light');
+            // Check file type
+            if (!file.name.toLowerCase().endsWith('.doc') && !file.name.toLowerCase().endsWith('.docx')) {
+                showStatus('Please select a Word document (.doc or .docx).', 'error');
+                return;
             }
             
-            function unhighlight() {
-                dropArea.classList.remove('bg-light');
-            }
+            // Show loading spinner
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('status').style.display = 'none';
             
-            // Handle file drop
-            dropArea.addEventListener('drop', handleDrop, false);
+            const formData = new FormData();
+            formData.append('file', file);
             
-            function handleDrop(e) {
-                const dt = e.dataTransfer;
-                const files = dt.files;
-                handleFiles(files);
-            }
-            
-            // Handle file selection via button
-            selectFileBtn.addEventListener('click', () => {
-                fileInput.click();
-            });
-            
-            fileInput.addEventListener('change', function() {
-                handleFiles(this.files);
-            });
-            
-            function handleFiles(files) {
-                if (files.length > 0) {
-                    const file = files[0];
-                    if (file.name.endsWith('.doc') || file.name.endsWith('.docx')) {
-                        fileChosen.textContent = file.name;
-                        convertBtn.disabled = false;
-                        resetMessages();
-                    } else {
-                        showError('Please select a valid Word document (.doc or .docx)');
-                        fileChosen.textContent = '';
-                        convertBtn.disabled = true;
-                    }
+            fetch('/convert', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Hide loading spinner
+                document.getElementById('loading').style.display = 'none';
+                
+                if (data.success) {
+                    // Show success message with download link
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.innerHTML = `
+                        <p>Conversion successful! Click below to download:</p>
+                        <p><a href="${data.download_url}" class="btn">${data.filename}</a></p>
+                    `;
+                    statusDiv.className = 'success';
+                    statusDiv.style.display = 'block';
+                } else {
+                    showStatus(`Error: ${data.error}`, 'error');
                 }
-            }
-            
-            // Convert button functionality
-            convertBtn.addEventListener('click', function() {
-                if (!fileInput.files[0]) {
-                    showError('Please select a file first');
-                    return;
-                }
-                
-                const file = fileInput.files[0];
-                const formData = new FormData();
-                formData.append('file', file);
-                
-                resetMessages();
-                progressArea.style.display = 'block';
-                convertBtn.disabled = true;
-                
-                fetch('/convert', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    progressArea.style.display = 'none';
-                    
-                    if (data.success) {
-                        successMessage.style.display = 'block';
-                        downloadLink.href = data.download_url;
-                        downloadLink.setAttribute('download', data.filename);
-                    } else {
-                        showError(data.error || 'An error occurred during conversion');
-                        convertBtn.disabled = false;
-                    }
-                })
-                .catch(error => {
-                    progressArea.style.display = 'none';
-                    showError('Network error. Please try again.');
-                    convertBtn.disabled = false;
-                });
+            })
+            .catch(error => {
+                document.getElementById('loading').style.display = 'none';
+                showStatus(`Error: ${error.message}`, 'error');
             });
-            
-            function showError(message) {
-                errorMessage.textContent = message;
-                errorMessage.style.display = 'block';
-                successMessage.style.display = 'none';
-            }
-            
-            function resetMessages() {
-                errorMessage.style.display = 'none';
-                successMessage.style.display = 'none';
-                progressArea.style.display = 'none';
-            }
         });
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = type;
+            statusDiv.style.display = 'block';
+        }
     </script>
 </body>
 </html>
