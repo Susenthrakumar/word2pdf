@@ -3,6 +3,4 @@ python-docx==0.8.11
 uuid==1.30
 reportlab==4.0.4
 gunicorn
-# Optional libraries that you might need:
-# unoconv
-# python-uno
+pypdf2
