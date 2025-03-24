@@ -1,7 +1,7 @@
 # app.py
 from flask import Flask, request, render_template, send_file, jsonify
 import os
-from docx2pdf import convert
+from pdfkit import convert
 import uuid
 import time
 
